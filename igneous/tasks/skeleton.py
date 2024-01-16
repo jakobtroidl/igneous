@@ -90,6 +90,7 @@ class SkeletonTask(RegisteredTask):
     synapses = None, 
     dust_global:bool = False, 
     fix_autapses:bool = False,
+    timestamp:Optional[int] = None,
   ):
     super(SkeletonTask, self).__init__(
       cloudpath, shape, offset, mip, 
@@ -99,7 +100,8 @@ class SkeletonTask(RegisteredTask):
       fix_avocados, fill_holes,
       dust_threshold, progress, parallel,
       fill_missing, bool(sharded), frag_path, bool(spatial_index),
-      spatial_grid_shape, synapses, bool(dust_global), bool(fix_autapses),
+      spatial_grid_shape, synapses, bool(dust_global), 
+      bool(fix_autapses), timestamp,
     )
     self.bounds = Bbox(offset, Vec(*shape) + Vec(*offset))
     self.index_bounds = Bbox(offset, Vec(*spatial_grid_shape) + Vec(*offset))
@@ -110,6 +112,8 @@ class SkeletonTask(RegisteredTask):
       info=self.info, cdn_cache=False,
       parallel=self.parallel, 
       fill_missing=self.fill_missing,
+      agglomerate=True,
+      timestamp=timestamp,
     )
     bbox = Bbox.clamp(self.bounds, vol.bounds)
     index_bbox = Bbox.clamp(self.index_bounds, vol.bounds)

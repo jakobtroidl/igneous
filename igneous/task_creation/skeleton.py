@@ -50,6 +50,7 @@ def create_skeletonizing_tasks(
     sharded=False, frag_path=None, spatial_index=True,
     synapses=None, num_synapses=None,
     dust_global=False, fix_autapses=False,
+    timestamp=None,
   ):
   """
   Assign tasks with one voxel overlap in a regular grid 
@@ -135,6 +136,7 @@ def create_skeletonizing_tasks(
     Iterable yielding ((x,y,z),segid,swc_label)
 
   num_synapses: If synapses is an iterator, you must provide the total number of synapses.
+  timestamp: for graphene volumes only, you can specify the timepoint to use
   """
   shape = Vec(*shape)
   vol = CloudVolume(cloudpath, mip=mip, info=info)
@@ -202,6 +204,7 @@ def create_skeletonizing_tasks(
         synapses=bbox_synapses,
         dust_global=dust_global,
         fix_autapses=bool(fix_autapses),
+        timestamp=timestamp,
       )
 
     def synapses_for_bbox(self, shape, offset):
@@ -246,6 +249,7 @@ def create_skeletonizing_tasks(
           'synapses': bool(synapses),
           'dust_global': bool(dust_global),
           'fix_autapses': bool(fix_autapses),
+          'timestamp': timestamp,
         },
         'by': operator_contact(),
         'date': strftime('%Y-%m-%d %H:%M %Z'),
