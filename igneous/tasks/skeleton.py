@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 
 from functools import reduce
 import itertools
@@ -21,9 +21,10 @@ from cloudfiles import CloudFiles, CloudFile
 
 import cloudvolume
 from cloudvolume import CloudVolume, PrecomputedSkeleton, paths
-from cloudvolume.lib import Vec, Bbox, sip
+from cloudvolume.lib import Vec, Bbox, sip, xyzrange
 from cloudvolume.datasource.precomputed.sharding import synthesize_shard_files
 
+import cc3d
 import fastremap
 import kimimaro
 
@@ -64,15 +65,31 @@ class SkeletonTask(RegisteredTask):
   They will be merged in the stage 2 task SkeletonMergeTask.
   """
   def __init__(
-    self, cloudpath, shape, offset, 
-    mip, teasar_params, will_postprocess, 
-    info=None, object_ids=None, mask_ids=None,
-    fix_branching=True, fix_borders=True, 
-    fix_avocados=False, fill_holes=False,
-    dust_threshold=1000, progress=False,
-    parallel=1, fill_missing=False, sharded=False,
-    frag_path=None, spatial_index=True, spatial_grid_shape=None,
-    synapses=None, dust_global=False
+    self, 
+    cloudpath:str, 
+    shape, 
+    offset, 
+    mip:int, 
+    teasar_params:dict, 
+    will_postprocess:bool, 
+    info:Optional[dict] = None, 
+    object_ids:Optional[List[int]] = None, 
+    mask_ids:Optional[List[int]] = None,
+    fix_branching:bool = True, 
+    fix_borders:bool = True, 
+    fix_avocados:bool = False, 
+    fill_holes:bool = False,
+    dust_threshold:int = 1000, 
+    progress:bool = False,
+    parallel:int = 1, 
+    fill_missing:bool = False, 
+    sharded:bool = False,
+    frag_path:Optional[str] = None, 
+    spatial_index:bool = True, 
+    spatial_grid_shape = None,
+    synapses = None, 
+    dust_global:bool = False, 
+    fix_autapses:bool = False,
   ):
     super(SkeletonTask, self).__init__(
       cloudpath, shape, offset, mip, 
@@ -82,7 +99,7 @@ class SkeletonTask(RegisteredTask):
       fix_avocados, fill_holes,
       dust_threshold, progress, parallel,
       fill_missing, bool(sharded), frag_path, bool(spatial_index),
-      spatial_grid_shape, synapses, bool(dust_global)
+      spatial_grid_shape, synapses, bool(dust_global), bool(fix_autapses),
     )
     self.bounds = Bbox(offset, Vec(*shape) + Vec(*offset))
     self.index_bounds = Bbox(offset, Vec(*spatial_grid_shape) + Vec(*offset))
@@ -117,6 +134,10 @@ class SkeletonTask(RegisteredTask):
       dust_threshold = 0
       all_labels = self.apply_global_dust_threshold(vol, all_labels)
 
+    voxel_graph = None
+    if self.fix_autapses:
+      voxel_graph = self.voxel_connectivity_graph(vol, bbox)
+
     skeletons = kimimaro.skeletonize(
       all_labels, self.teasar_params, 
       object_ids=self.object_ids, 
@@ -129,6 +150,7 @@ class SkeletonTask(RegisteredTask):
       fill_holes=self.fill_holes,
       parallel=self.parallel,
       extra_targets_after=extra_targets_after.keys(),
+      voxel_graph=voxel_graph,
     )    
 
     # voxel centered (+0.5) and uses more accurate bounding box from mip 0
@@ -162,6 +184,23 @@ class SkeletonTask(RegisteredTask):
     if self.spatial_index:
       self.upload_spatial_index(vol, path, index_bbox, skeletons)
   
+  def voxel_connectivity_graph(self, vol:CloudVolume, bbox:Bbox) -> np.ndarray:
+    layer_2 = vol.download(bbox, stop_layer=2, agglomerate=True)
+
+    sgx, sgy, sgz = list(np.ceil(bbox.size3() / vol.meta.graph_chunk_size).astype(int))
+
+    vcg = np.zeros(layer_2.shape, dtype=np.uint32, order="F")
+
+    for gx,gy,gz in xyzrange([sgx, sgy, sgz]):
+      bbx = Bbox((gx,gy,gz), (gx+1, gy+1, gz+1))
+      bbx *= vol.meta.graph_chunk_size
+
+      cutout = np.asfortranarray(layer_2[bbx.to_slices()])
+      vcg_cutout = cc3d.voxel_connectivity_graph(cutout, connectivity=26)
+      vcg[bbx.to_slices()] = vcg_cutout
+
+    return vcg
+
   def apply_global_dust_threshold(self, vol, all_labels):
     path = vol.meta.join(self.cloudpath, vol.key, 'stats', 'voxel_counts.im')
     cf = CloudFile(path)
